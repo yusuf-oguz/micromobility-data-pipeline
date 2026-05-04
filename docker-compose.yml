@@ -143,6 +143,19 @@ services:
       - pipeline_net
     restart: unless-stopped
 
+  # ─── NiFi Flow Setup (one-shot) ───────────────────────────────────────────
+  nifi-setup:
+    image: curlimages/curl:8.7.1
+    volumes:
+      - ./nifi/setup_nifi.sh:/setup_nifi.sh
+      - ./nifi/scooter_flow.xml:/templates/scooter_flow.xml
+    entrypoint: ["/bin/sh", "/setup_nifi.sh"]
+    depends_on:
+      nifi:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+
   # ─── ES Index Setup (one-shot) ─────────────────────────────────────────────
   es-setup:
     image: curlimages/curl:8.7.1
