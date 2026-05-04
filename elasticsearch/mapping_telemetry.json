@@ -1,0 +1,25 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "properties": {
+      "event_id":     { "type": "keyword" },
+      "scooter_id":   { "type": "keyword" },
+      "timestamp":    { "type": "date" },
+      "location": {
+        "type": "geo_point"
+      },
+      "lat":          { "type": "double" },
+      "lon":          { "type": "double" },
+      "speed_kmh":    { "type": "float" },
+      "battery_pct":  { "type": "float" },
+      "odometer_km":  { "type": "float" },
+      "trip_id":      { "type": "keyword" },
+      "gps_valid":    { "type": "boolean" },
+      "fault_code":   { "type": "keyword" },
+      "anomaly_type": { "type": "keyword" }
+    }
+  }
+}

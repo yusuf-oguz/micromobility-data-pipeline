@@ -1,0 +1,8 @@
+FROM apache/nifi:1.25.0
+
+# Download PostgreSQL JDBC driver so PutDatabaseRecord can connect without manual steps
+USER root
+RUN curl -L -o /opt/nifi/nifi-current/lib/postgresql-42.7.3.jar \
+    https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+
+USER nifi

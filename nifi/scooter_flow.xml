@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  NiFi Flow Template: Scooter IoT Pipeline
+  Import via NiFi UI: Upload Template → Instantiate Template
+
+  Flow:
+    TailFile (scooter_stream.jsonl)
+      → SplitText (line by line)
+        → EvaluateJsonPath (extract anomaly_type, fault_code, lat, lon)
+          → RouteOnAttribute
+              ├── anomaly / fault  → PutElasticsearchHttp (hardware-alerts index)
+              └── normal           → PutDatabaseRecord (PostgreSQL telemetry table)
+-->
+<template>
+  <description>Scooter IoT telemetry pipeline: JSONL → NiFi → PostgreSQL / Elasticsearch</description>
+  <groupId>scooter-root-pg</groupId>
+  <name>Scooter Pipeline</name>
+  <snippet>
+    <processGroups>
+      <id>scooter-root-pg</id>
+      <parentGroupId>root</parentGroupId>
+      <position>
+        <x>0.0</x>
+        <y>0.0</y>
+      </position>
+      <processors>
+        <!-- 1. TailFile -->
+        <id>tail-file-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>100.0</x><y>100.0</y></position>
+        <config>
+          <bulletinLevel>WARN</bulletinLevel>
+          <comments>Reads new lines from the simulator log as they appear.</comments>
+          <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
+          <defaultConcurrentTasks>
+            <entry><key>TIMER_DRIVEN</key><value>1</value></entry>
+          </defaultConcurrentTasks>
+          <defaultSchedulingPeriod>
+            <entry><key>TIMER_DRIVEN</key><value>1 sec</value></entry>
+          </defaultSchedulingPeriod>
+          <descriptors>
+            <entry>
+              <key>File to Tail</key>
+              <value>
+                <name>File to Tail</name>
+                <required>true</required>
+              </value>
+            </entry>
+          </descriptors>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>File to Tail</key><value>/data/scooter_stream.jsonl</value></entry>
+            <entry><key>tail-mode</key><value>Single file</value></entry>
+            <entry><key>Rolling Filename Pattern</key><value>scooter_stream.jsonl.*</value></entry>
+            <entry><key>Start Position</key><value>Beginning of File</value></entry>
+            <entry><key>Initial Start Position</key><value>Beginning of File</value></entry>
+          </properties>
+          <runDurationMillis>25</runDurationMillis>
+          <schedulingPeriod>1 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>TailFile - scooter_stream.jsonl</name>
+        <relationships>
+          <autoTerminate>false</autoTerminate>
+          <name>success</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.standard.TailFile</type>
+      </processors>
+
+      <!-- 2. SplitText -->
+      <processors>
+        <id>split-text-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>400.0</x><y>100.0</y></position>
+        <config>
+          <comments>Splits multi-line flowfile into one-line-per-flowfile.</comments>
+          <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>Line Split Count</key><value>1</value></entry>
+            <entry><key>Maximum Fragment Size</key><value></value></entry>
+            <entry><key>Header Line Count</key><value>0</value></entry>
+            <entry><key>Header Line Marker Characters</key><value></value></entry>
+            <entry><key>Remove Trailing Newlines</key><value>true</value></entry>
+          </properties>
+          <schedulingPeriod>0 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>SplitText - one record per FlowFile</name>
+        <relationships>
+          <autoTerminate>false</autoTerminate>
+          <name>splits</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>original</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>failure</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.standard.SplitText</type>
+      </processors>
+
+      <!-- 3. EvaluateJsonPath -->
+      <processors>
+        <id>eval-json-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>700.0</x><y>100.0</y></position>
+        <config>
+          <comments>Extracts routing attributes from JSON payload.</comments>
+          <concurrentlySchedulableTaskCount>4</concurrentlySchedulableTaskCount>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>Destination</key><value>flowfile-attribute</value></entry>
+            <entry><key>Return Type</key><value>auto-detect</value></entry>
+            <entry><key>Path Not Found Behavior</key><value>warn</value></entry>
+            <entry><key>Null Value Representation</key><value>empty string</value></entry>
+            <entry><key>anomaly_type</key><value>$.anomaly_type</value></entry>
+            <entry><key>fault_code</key><value>$.fault_code</value></entry>
+            <entry><key>lat</key><value>$.lat</value></entry>
+            <entry><key>gps_valid</key><value>$.gps_valid</value></entry>
+          </properties>
+          <schedulingPeriod>0 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>EvaluateJsonPath - extract routing attrs</name>
+        <relationships>
+          <autoTerminate>false</autoTerminate>
+          <name>matched</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>unmatched</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.standard.EvaluateJsonPath</type>
+      </processors>
+
+      <!-- 4. RouteOnAttribute -->
+      <processors>
+        <id>route-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>1000.0</x><y>100.0</y></position>
+        <config>
+          <comments>Routes anomalies/faults to Elasticsearch; normal telemetry to PostgreSQL.</comments>
+          <concurrentlySchedulableTaskCount>4</concurrentlySchedulableTaskCount>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>Routing Strategy</key><value>Route to Property name</value></entry>
+            <entry>
+              <key>to_elastic</key>
+              <value>${anomaly_type:isNull():not():or(${fault_code:isNull():not()})}</value>
+            </entry>
+            <entry>
+              <key>to_postgres</key>
+              <value>${anomaly_type:isNull():and(${fault_code:isNull()})}</value>
+            </entry>
+          </properties>
+          <schedulingPeriod>0 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>RouteOnAttribute - elastic vs postgres</name>
+        <relationships>
+          <autoTerminate>false</autoTerminate>
+          <name>to_elastic</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>false</autoTerminate>
+          <name>to_postgres</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>unmatched</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.standard.RouteOnAttribute</type>
+      </processors>
+
+      <!-- 5a. PutElasticsearchHttp (anomalies) -->
+      <processors>
+        <id>put-es-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>1300.0</x><y>-100.0</y></position>
+        <config>
+          <comments>Indexes hardware alerts and anomalies into Elasticsearch.</comments>
+          <concurrentlySchedulableTaskCount>4</concurrentlySchedulableTaskCount>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>Elasticsearch URL</key><value>http://elasticsearch:9200</value></entry>
+            <entry><key>Index</key><value>scooter-alerts</value></entry>
+            <entry><key>Type</key><value>_doc</value></entry>
+            <entry><key>Batch Size</key><value>100</value></entry>
+            <entry><key>Connection Timeout</key><value>5 secs</value></entry>
+            <entry><key>Username</key><value>elastic</value></entry>
+            <entry><key>Password</key><value>elastic123</value></entry>
+          </properties>
+          <schedulingPeriod>0 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>PutElasticsearchHttp - hardware-alerts</name>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>success</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>failure</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>retry</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.elasticsearch.PutElasticsearchHttp</type>
+      </processors>
+
+      <!-- 5b. PutDatabaseRecord (normal telemetry → PostgreSQL) -->
+      <processors>
+        <id>put-db-proc</id>
+        <parentGroupId>scooter-root-pg</parentGroupId>
+        <position><x>1300.0</x><y>300.0</y></position>
+        <config>
+          <comments>Inserts normal telemetry records into PostgreSQL telemetry table.</comments>
+          <concurrentlySchedulableTaskCount>4</concurrentlySchedulableTaskCount>
+          <executionNode>ALL</executionNode>
+          <lossTolerant>false</lossTolerant>
+          <penaltyDuration>30 sec</penaltyDuration>
+          <properties>
+            <entry><key>Statement Type</key><value>INSERT</value></entry>
+            <entry><key>Schema Name</key><value>public</value></entry>
+            <entry><key>Table Name</key><value>telemetry</value></entry>
+            <entry><key>Translate Field Names</key><value>true</value></entry>
+            <entry><key>Unmatched Field Behavior</key><value>Ignore Unmatched Fields</value></entry>
+            <entry><key>Unmatched Column Behavior</key><value>Warn on Unmatched Columns</value></entry>
+            <entry><key>Update Keys</key><value></value></entry>
+            <entry><key>Field Containing SQL</key><value></value></entry>
+            <entry><key>Allow Multiple Statements</key><value>false</value></entry>
+            <entry><key>Quote Column Identifiers</key><value>false</value></entry>
+            <entry><key>Quote Table Identifiers</key><value>false</value></entry>
+            <entry><key>Max Wait Time</key><value>0 seconds</value></entry>
+            <entry><key>Rollback On Failure</key><value>false</value></entry>
+            <entry><key>Table Schema Cache Size</key><value>10</value></entry>
+          </properties>
+          <schedulingPeriod>0 sec</schedulingPeriod>
+          <schedulingStrategy>TIMER_DRIVEN</schedulingStrategy>
+          <yieldDuration>1 sec</yieldDuration>
+        </config>
+        <name>PutDatabaseRecord - telemetry → PostgreSQL</name>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>success</name>
+        </relationships>
+        <relationships>
+          <autoTerminate>true</autoTerminate>
+          <name>failure</name>
+        </relationships>
+        <state>RUNNING</state>
+        <style/>
+        <type>org.apache.nifi.processors.standard.PutDatabaseRecord</type>
+      </processors>
+    </processGroups>
+
+    <connections>
+      <!-- TailFile → SplitText -->
+      <id>conn-tail-split</id>
+      <parentGroupId>scooter-root-pg</parentGroupId>
+      <source><id>tail-file-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></source>
+      <destination><id>split-text-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></destination>
+      <selectedRelationships>success</selectedRelationships>
+      <bends/>
+    </connections>
+
+    <connections>
+      <!-- SplitText → EvaluateJsonPath -->
+      <id>conn-split-eval</id>
+      <parentGroupId>scooter-root-pg</parentGroupId>
+      <source><id>split-text-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></source>
+      <destination><id>eval-json-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></destination>
+      <selectedRelationships>splits</selectedRelationships>
+      <bends/>
+    </connections>
+
+    <connections>
+      <!-- EvaluateJsonPath → RouteOnAttribute -->
+      <id>conn-eval-route</id>
+      <parentGroupId>scooter-root-pg</parentGroupId>
+      <source><id>eval-json-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></source>
+      <destination><id>route-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></destination>
+      <selectedRelationships>matched</selectedRelationships>
+      <bends/>
+    </connections>
+
+    <connections>
+      <!-- Route → Elasticsearch -->
+      <id>conn-route-es</id>
+      <parentGroupId>scooter-root-pg</parentGroupId>
+      <source><id>route-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></source>
+      <destination><id>put-es-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></destination>
+      <selectedRelationships>to_elastic</selectedRelationships>
+      <bends/>
+    </connections>
+
+    <connections>
+      <!-- Route → PostgreSQL -->
+      <id>conn-route-pg</id>
+      <parentGroupId>scooter-root-pg</parentGroupId>
+      <source><id>route-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></source>
+      <destination><id>put-db-proc</id><groupId>scooter-root-pg</groupId><type>PROCESSOR</type></destination>
+      <selectedRelationships>to_postgres</selectedRelationships>
+      <bends/>
+    </connections>
+  </snippet>
+  <timestamp>2026-05-04T00:00:00.000+03:00</timestamp>
+</template>
