@@ -4,7 +4,7 @@ set -e
 
 ES_URL="http://elasticsearch:9200"
 ES_USER="elastic"
-ES_PASS="${ELASTIC_PASSWORD:-elastic123}"
+ES_PASS="${ELASTIC_PASSWORD:-admin12345}"
 
 echo "[es-setup] Waiting for Elasticsearch..."
 until curl -s -u "$ES_USER:$ES_PASS" "$ES_URL/_cluster/health" | grep -q '"status":"green"\|"status":"yellow"'; do

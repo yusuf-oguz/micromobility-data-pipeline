@@ -6,7 +6,7 @@ set -e
 
 NIFI_URL="http://nifi:8080/nifi-api"
 NIFI_USER="admin"
-NIFI_PASS="adminadminadmin"
+NIFI_PASS="admin12345"
 TEMPLATE_FILE="/templates/scooter_flow.xml"
 
 echo "[nifi-setup] NiFi bekleniyor..."

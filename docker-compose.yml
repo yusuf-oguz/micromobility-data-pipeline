@@ -108,7 +108,7 @@ services:
     environment:
       - NIFI_WEB_HTTP_PORT=8080
       - SINGLE_USER_CREDENTIALS_USERNAME=admin
-      - SINGLE_USER_CREDENTIALS_PASSWORD=adminadminadmin
+      - SINGLE_USER_CREDENTIALS_PASSWORD=admin12345
     volumes:
       - nifi_data:/opt/nifi/nifi-current/data
       - nifi_logs:/opt/nifi/nifi-current/logs
@@ -183,7 +183,7 @@ services:
           --lastname User \
           --role Admin \
           --email admin@scooter.local \
-          --password admin123
+          --password admin12345
     restart: "no"
 
   # ─── Airflow Webserver ─────────────────────────────────────────────────────

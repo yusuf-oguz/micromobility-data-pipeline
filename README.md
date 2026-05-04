@@ -67,11 +67,11 @@ All services start automatically. Allow ~3-5 minutes for Elasticsearch and NiFi 
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| NiFi | http://localhost:8080/nifi | admin / adminadminadmin |
-| Kibana | http://localhost:5601 | elastic / elastic123 |
-| Airflow | http://localhost:8081 | admin / admin123 |
-| pgAdmin | http://localhost:5050 | admin@scooter.local / admin123 |
-| Elasticsearch | http://localhost:9200 | elastic / elastic123 |
+| NiFi | http://localhost:8080/nifi | admin / admin12345 |
+| Kibana | http://localhost:5601 | elastic / admin12345 |
+| Airflow | http://localhost:8081 | admin / admin12345 |
+| pgAdmin | http://localhost:5050 | admin@scooter.local / admin12345 |
+| Elasticsearch | http://localhost:9200 | elastic / admin12345 |
 
 ## NiFi Flow Setup
 
