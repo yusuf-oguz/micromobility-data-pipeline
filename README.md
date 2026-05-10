@@ -9,7 +9,7 @@ End-to-end containerized data engineering pipeline for a simulated electric scoo
 | Name | Student No |
 |------|-----------|
 | Yusuf Oğuz | 150220322 |
-| Yusuf Öksüzer | — |
+| Yusuf Öksüzer | 150220334 |
 
 ## Architecture
 
@@ -124,3 +124,12 @@ Secrets are stored in `.env` (not committed to git). Copy `.env.example` and fil
 ```bash
 cp .env.example .env
 ```
+
+## Known Limitations
+
+- **NiFi flow is one-directional:** Normal telemetry records are dropped after routing (they are already written directly to PostgreSQL by the simulator). Only anomalies reach Elasticsearch.
+- **Simulator is CPU-bound on a single thread per scooter:** At 50 scooters × 1 record/sec the load is light, but scaling to hundreds of scooters would require async I/O or multiprocessing.
+- **Airflow DAG runs at 02:00 UTC daily:** During a fresh start the aggregation tables (`trips`, `daily_hotspots`, `daily_revenue`) will be empty until the first scheduled run. They can be triggered manually from the Airflow UI.
+- **Kibana dashboard is pre-imported from a static export:** If Elasticsearch index mappings change, the saved search queries inside the dashboard may need to be refreshed manually.
+- **No TLS between internal services:** All inter-container communication uses plain HTTP on the `pipeline_net` bridge network. This is acceptable for a development/demo environment but not for production.
+- **JSONL file grows unboundedly during a session:** The simulator uses a `RotatingFileHandler` (50 MB cap, 3 backups), but NiFi's TailFile processor tracks the byte offset, so log rotation may cause NiFi to miss records written to the new file until it picks up the rotated path.

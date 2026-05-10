@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 data/*.jsonl
 data/*.jsonl.*
+!data/sample_records.jsonl
 *.log
 .DS_Store
 Thumbs.db
