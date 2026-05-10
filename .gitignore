@@ -8,3 +8,4 @@ data/*.jsonl.*
 *.log
 .DS_Store
 Thumbs.db
+docs/images/
