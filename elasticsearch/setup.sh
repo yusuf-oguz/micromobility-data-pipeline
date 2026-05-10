@@ -26,4 +26,11 @@ curl -s -u "$ES_USER:$ES_PASS" -X PUT "$ES_URL/scooter-telemetry" \
 echo ""
 echo "[es-setup] scooter-telemetry index created."
 
+# Set kibana_system password so Kibana can connect
+curl -s -u "$ES_USER:$ES_PASS" -X POST "$ES_URL/_security/user/kibana_system/_password" \
+  -H "Content-Type: application/json" \
+  -d "{\"password\":\"$ES_PASS\"}"
+echo ""
+echo "[es-setup] kibana_system password set."
+
 echo "[es-setup] Done."

@@ -1,5 +1,3 @@
-version: "3.9"
-
 x-airflow-common: &airflow-common
   image: apache/airflow:2.9.1
   env_file: .env
@@ -88,12 +86,18 @@ services:
     image: docker.elastic.co/kibana/kibana:8.13.4
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
     volumes:
       - kibana_data:/usr/share/kibana/data
     ports:
       - "5601:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD} http://localhost:5601/api/status | grep -q '\"level\":\"available\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -107,6 +111,8 @@ services:
       dockerfile: Dockerfile.nifi
     environment:
       - NIFI_WEB_HTTP_PORT=8080
+      - NIFI_WEB_HTTP_HOST=0.0.0.0
+      - NIFI_WEB_HTTPS_PORT=
       - SINGLE_USER_CREDENTIALS_USERNAME=admin
       - SINGLE_USER_CREDENTIALS_PASSWORD=admin12345
     volumes:
@@ -116,11 +122,6 @@ services:
       - ./nifi/templates:/opt/nifi/nifi-current/conf/templates
     ports:
       - "8080:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/nifi/ || exit 1"]
-      interval: 30s
-      timeout: 15s
-      retries: 10
     networks:
       - pipeline_net
 
@@ -151,7 +152,20 @@ services:
       - ./nifi/scooter_flow.xml:/templates/scooter_flow.xml
     entrypoint: ["/bin/sh", "/setup_nifi.sh"]
     depends_on:
-      nifi:
+      - nifi
+    networks:
+      - pipeline_net
+
+  # ─── Kibana Dashboard Setup (one-shot) ───────────────────────────────────────
+  kibana-setup:
+    image: curlimages/curl:8.7.1
+    env_file: .env
+    volumes:
+      - ./kibana/setup.sh:/kibana/setup.sh
+      - ./kibana/dashboard.ndjson:/kibana/dashboard.ndjson
+    entrypoint: ["/bin/sh", "/kibana/setup.sh"]
+    depends_on:
+      kibana:
         condition: service_healthy
     networks:
       - pipeline_net

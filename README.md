@@ -9,47 +9,40 @@ End-to-end containerized data engineering pipeline for a simulated electric scoo
 | Name | Student No |
 |------|-----------|
 | Yusuf Oğuz | 150220322 |
+| Yusuf Öksüzer | — |
 
 ## Architecture
 
 ```
 ┌─────────────────┐
 │  Python         │  Simulates 50 scooters (GPS, battery,
-│  Simulator      │  speed, anomalies) → JSONL log file
+│  Simulator      │  speed, anomalies) → JSONL + PostgreSQL
 └────────┬────────┘
          │ /data/scooter_stream.jsonl (shared volume)
          ▼
 ┌─────────────────┐
 │  Apache NiFi    │  TailFile → SplitText → EvaluateJsonPath
-│  (port 8080)    │  → RouteOnAttribute
-└────┬───────┬────┘
-     │       │
-     ▼       ▼
-┌────────┐ ┌──────────────────┐
-│Postgres│ │  Elasticsearch   │
-│(5432)  │ │  (port 9200)     │
-│        │ │  index:          │
-│telemetry│ │  scooter-alerts  │
-│trips   │ └────────┬─────────┘
-│hotspots│          │
-└────┬───┘          ▼
-     │       ┌──────────────┐
-     │       │    Kibana    │
-     │       │  (port 5601) │
-     │       │  Live map +  │
-     │       │  dashboards  │
-     │       └──────────────┘
-     │
-     ▼
-┌─────────────────┐
-│  Apache Airflow │  Daily DAG: trips → hotspots → revenue
-│  (port 8081)    │  Runs at 02:00 UTC
+│  (port 8080)    │  → RouteOnAttribute → InvokeHTTP
 └─────────────────┘
-     │
-     ▼
+         │ anomalies only
+         ▼
+┌──────────────────┐        ┌──────────────┐
+│  Elasticsearch   │───────▶│    Kibana    │
+│  (port 9200)     │        │  (port 5601) │
+│  scooter-alerts  │        │  Live map +  │
+└──────────────────┘        │  dashboards  │
+                            └──────────────┘
 ┌─────────────────┐
-│    pgAdmin      │  DB admin UI
-│  (port 5050)    │
+│   PostgreSQL    │  All telemetry (direct from simulator)
+│   (port 5432)   │  + daily aggregates from Airflow
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐        ┌──────────────┐
+│  Apache Airflow │        │   pgAdmin    │
+│  (port 8081)    │        │  (port 5050) │
+│  Daily DAG      │        │  DB admin UI │
+│  02:00 UTC      │        └──────────────┘
 └─────────────────┘
 ```
 
@@ -58,10 +51,11 @@ End-to-end containerized data engineering pipeline for a simulated electric scoo
 ```bash
 git clone <repo-url>
 cd scooter-pipeline
+cp .env.example .env
 docker compose up --build
 ```
 
-All services start automatically. Allow ~3-5 minutes for Elasticsearch and NiFi to initialize.
+Allow ~3-5 minutes for all services to initialize. Everything is fully automatic — no manual configuration needed.
 
 ## Service URLs
 
@@ -70,51 +64,63 @@ All services start automatically. Allow ~3-5 minutes for Elasticsearch and NiFi 
 | NiFi | http://localhost:8080/nifi | admin / admin12345 |
 | Kibana | http://localhost:5601 | elastic / admin12345 |
 | Airflow | http://localhost:8081 | admin / admin12345 |
-| pgAdmin | http://localhost:5050 | admin@scooter.local / admin12345 |
+| pgAdmin | http://localhost:5050 | admin@scooterapp.com / admin12345 |
 | Elasticsearch | http://localhost:9200 | elastic / admin12345 |
+| PostgreSQL | localhost:5432 | scooter / admin12345 |
 
-## NiFi Flow Setup
+## What Starts Automatically
 
-After NiFi starts:
-1. Open http://localhost:8080/nifi
-2. Hamburger menu → Templates → Upload Template → select `nifi/scooter_flow.xml`
-3. Drag template onto canvas → Instantiate
-4. Configure the `DBCPConnectionPool` controller service with PostgreSQL JDBC URL
-5. Start all processors
+| Container | Role |
+|-----------|------|
+| `simulator` | Emits 50 scooter records/sec to JSONL and PostgreSQL |
+| `nifi-setup` | Creates NiFi processors and connections via REST API |
+| `es-setup` | Creates Elasticsearch indices with geo_point mapping |
+| `kibana-setup` | Imports the Kibana dashboard automatically |
+| `airflow-init` | Initializes Airflow DB and creates admin user |
+
+## Data Flow
+
+1. **Simulator** emits 50 scooter records/second:
+   - All records → PostgreSQL `telemetry` table (direct JDBC)
+   - All records → `/data/scooter_stream.jsonl` (shared volume)
+2. **NiFi** tails the JSONL file, splits into individual records, routes:
+   - Anomalies & faults → **Elasticsearch** (`scooter-alerts` index)
+   - Normal telemetry → dropped (already in PostgreSQL)
+3. **Airflow** runs nightly at 02:00 UTC, aggregating into:
+   - `public.trips` — trip summaries with revenue
+   - `public.daily_hotspots` — 500m grid ride density
+   - `public.daily_revenue` — fleet-wide daily revenue
+4. **Kibana** shows real-time anomaly map and dashboards (auto-imported)
+5. **pgAdmin** provides a GUI for PostgreSQL inspection
+
+## PostgreSQL Schema
+
+| Table | Description |
+|-------|-------------|
+| `public.telemetry` | Raw IoT records (all scooters, all events) |
+| `public.trips` | Trip summaries: distance, duration, revenue |
+| `public.daily_hotspots` | 500m grid hotspot density per day |
+| `public.daily_revenue` | Fleet-wide revenue aggregates per day |
 
 ## Repository Structure
 
 ```
 scooter-pipeline/
-├── src/               # Python simulator + Dockerfile
-├── dags/              # Airflow DAG files
-├── nifi/              # NiFi flow template (XML)
-│   └── templates/
-├── sql/               # PostgreSQL init scripts
-├── elasticsearch/     # Index mappings + setup script
-├── docs/              # Kibana setup guide
-├── data/              # Sample data (small subset)
+├── src/                   # Python simulator + Dockerfile
+├── dags/                  # Airflow DAG
+├── nifi/                  # NiFi setup script + flow XML
+├── sql/                   # PostgreSQL init schema
+├── elasticsearch/         # Index mappings + setup script
+├── kibana/                # Dashboard export + setup script
+├── docker/                # NiFi Dockerfile
 ├── docker-compose.yml
-└── .env
+└── .env.example
 ```
-
-## Data Flow
-
-1. **Simulator** emits 50 scooter records/second as JSONL to a shared Docker volume
-2. **NiFi** tails the file, splits into individual records, classifies each:
-   - Anomalies / faults → **Elasticsearch** (`scooter-alerts` index)
-   - Normal telemetry → **PostgreSQL** (`telemetry` table)
-3. **Airflow** runs nightly at 02:00 UTC, aggregating trips, hotspots, and revenue into summary tables
-4. **Kibana** shows real-time alert map and dashboards from Elasticsearch
-5. **pgAdmin** provides a GUI for PostgreSQL inspection
-
-## Known Limitations
-
-- NiFi `PutDatabaseRecord` requires manual JDBC driver configuration in the NiFi UI (PostgreSQL JDBC jar must be added to NiFi's lib directory or via NAR)
-- Airflow `scooter_daily_summary` DAG only processes yesterday's data; backfill is not triggered automatically
-- Kibana dashboards must be created manually following `docs/kibana_setup.md`
-- The simulator generates synthetic data only; no real scooter GPS feeds are used
 
 ## Environment Variables
 
-All secrets are stored in `.env` (not committed to git). See `.env.example` for required variables.
+Secrets are stored in `.env` (not committed to git). Copy `.env.example` and fill in values:
+
+```bash
+cp .env.example .env
+```

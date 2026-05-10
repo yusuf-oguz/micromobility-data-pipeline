@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS public.telemetry (
     odometer_km     NUMERIC(10,3),
     trip_id         UUID,
     gps_valid       BOOLEAN     DEFAULT TRUE,
+    fault_code      VARCHAR(32),
+    anomaly_type    VARCHAR(32),
     ingested_at     TIMESTAMPTZ DEFAULT NOW()
 );
 

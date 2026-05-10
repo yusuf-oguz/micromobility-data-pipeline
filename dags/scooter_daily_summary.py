@@ -102,7 +102,7 @@ def create_postgres_connection():
             host=os.getenv("POSTGRES_HOST", "postgres"),
             schema=os.getenv("POSTGRES_DB", "scooterdb"),
             login=os.getenv("POSTGRES_USER", "scooter"),
-            password=os.getenv("POSTGRES_PASSWORD", "scooter123"),
+            password=os.getenv("POSTGRES_PASSWORD", "admin12345"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
         )
         session.add(conn)

@@ -1,9 +1,9 @@
 """
 Scooter IoT telemetry simulator.
-Emits JSONL records to a rotating log file consumed by NiFi via TailFile.
+Emits JSONL records to a rotating log file (consumed by NiFi/TailFile)
+and inserts every record directly into PostgreSQL telemetry table.
 """
 import json
-import math
 import os
 import random
 import time
@@ -11,6 +11,9 @@ import uuid
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 import logging
+
+import psycopg2
+from psycopg2.extras import execute_values
 
 LOG_FILE = os.getenv("LOG_FILE", "/data/scooter_stream.jsonl")
 SCOOTER_COUNT = int(os.getenv("SCOOTER_COUNT", "50"))
@@ -29,6 +32,25 @@ handler.setFormatter(logging.Formatter("%(message)s"))
 logger = logging.getLogger("simulator")
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
+
+
+def connect_postgres():
+    return psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", "postgres"),
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DB", "scooterdb"),
+        user=os.getenv("POSTGRES_USER", "scooter"),
+        password=os.getenv("POSTGRES_PASSWORD", "admin12345"),
+    )
+
+
+INSERT_SQL = """
+INSERT INTO public.telemetry
+  (event_id, scooter_id, ts, lat, lon, speed_kmh, battery_pct,
+   odometer_km, trip_id, gps_valid, fault_code, anomaly_type)
+VALUES %s
+ON CONFLICT (event_id) DO NOTHING
+"""
 
 
 class Scooter:
@@ -92,12 +114,15 @@ class Scooter:
         return record
 
     def _build_record(self, anomaly_type, gps_valid=True) -> dict:
-        base = {
+        lat = round(self.lat, 6) if gps_valid else None
+        lon = round(self.lon, 6) if gps_valid else None
+        return {
             "event_id": str(uuid.uuid4()),
             "scooter_id": self.scooter_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "lat": round(self.lat, 6) if gps_valid else None,
-            "lon": round(self.lon, 6) if gps_valid else None,
+            "lat": lat,
+            "lon": lon,
+            "location": {"lat": lat, "lon": lon} if gps_valid else None,
             "speed_kmh": round(self.speed, 2),
             "battery_pct": round(self.battery, 2),
             "odometer_km": round(self.odometer_km, 3),
@@ -106,7 +131,15 @@ class Scooter:
             "fault_code": self.fault_code,
             "anomaly_type": anomaly_type,
         }
-        return base
+
+
+def record_to_row(r: dict):
+    return (
+        r["event_id"], r["scooter_id"], r["timestamp"],
+        r["lat"], r["lon"], r["speed_kmh"], r["battery_pct"],
+        r["odometer_km"], r["trip_id"], r["gps_valid"],
+        r["fault_code"], r["anomaly_type"],
+    )
 
 
 def main():
@@ -114,11 +147,36 @@ def main():
     record_count = 0
     print(f"[simulator] Starting: {SCOOTER_COUNT} scooters, writing to {LOG_FILE}", flush=True)
 
+    pg = None
+    while pg is None:
+        try:
+            pg = connect_postgres()
+            print("[simulator] PostgreSQL connected.", flush=True)
+        except Exception as e:
+            print(f"[simulator] PG connect failed: {e}, retrying in 5s...", flush=True)
+            time.sleep(5)
+
+    cur = pg.cursor()
+
     while True:
+        batch = []
         for sc in scooters:
             record = sc.tick()
             logger.info(json.dumps(record, ensure_ascii=False))
+            batch.append(record_to_row(record))
             record_count += 1
+
+        try:
+            execute_values(cur, INSERT_SQL, batch)
+            pg.commit()
+        except Exception as e:
+            print(f"[simulator] PG insert error: {e}", flush=True)
+            pg.rollback()
+            try:
+                pg = connect_postgres()
+                cur = pg.cursor()
+            except Exception:
+                pass
 
         if record_count % (SCOOTER_COUNT * 100) == 0:
             print(f"[simulator] Emitted {record_count} records total", flush=True)
