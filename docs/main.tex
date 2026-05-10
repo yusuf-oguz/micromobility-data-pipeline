@@ -1,0 +1,293 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[utf8]{inputenc} % Türkçe karakter desteği için
+\usepackage[T1]{fontenc}    % Türkçe karakter desteği için
+\usepackage{tabularx}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{End-to-End Containerized Data Engineering Architecture for Real-Time Micro-Mobility Telemetry}
+
+\author{\IEEEauthorblockN{1\textsuperscript{st} Yusuf Öksüzer}
+\IEEEauthorblockA{\textit{Artificial Intelligence and Data Eng. Dep.} \\
+\textit{İstanbul Techniacl University}\\
+İstanbul, Türkiye \\
+oksuzer22@itu.edu.tr}
+\and
+
+\IEEEauthorblockN{2\textsuperscript{nd} Yusuf Oğuz}
+\IEEEauthorblockA{\textit{Artificial Intelligence and Data Eng. Dep.} \\
+\textit{İstanbul Teknik Üniversitesi}\\
+İstanbul, Türkiye \\
+oguzyu22@itu.edu.tr}
+}
+
+\maketitle
+
+\begin{abstract}
+Real-time Internet of Things (IoT) data processing processes, especially in urban micro-mobility systems, increasingly require end-to-end data architectures capable of reliably managing high-frequency telemetry streams. This study presents a fully containerized data engineering pipeline developed to process synthetic location, battery, and hardware failure data from a simulated electric scooter fleet operating in the Şişli-Beşiktaş region. All components in the system are designed to boot up with a single Docker Compose command to provide a replicable and portable deployment model in a local environment. At the data generation layer, a custom Python simulator models 50 scooters and generates between 10,000 and 72,000 data points per hour in JSONL format containing realistic movement patterns, battery consumption curves, and intentionally injected anomalies (GPS loss, tipping, critical charge drop). Apache NiFi receives this stream in a decoupled form via a 'tail-file' mechanism; Structured telemetry logs are routed to PostgreSQL for billing and route analytics, while semi-structured hardware alerts and error codes are routed to Elasticsearch for anomaly querying. The Elasticsearch index is structured with 'geo\_point' mapping to enable geo-queries and Kibana map visualizations. In the batch processing layer, Apache Airflow automates operational reporting by scheduling DAGs that calculate daily usage densities (hotspots) and revenue summaries. Kibana integrates all these data layers by providing an operational dashboard that visualizes breakdown alerts and scooter locations in real time. This developed system offers a modular and scalable reference architecture for similar smart city applications, with the capacity to process high-frequency sensor data with low latency, automatically classify heterogeneous data types, and orchestrate periodic analyses.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Data Engineering, IoT Telemetry, Containerization, Apache NiFi, Apache Airflow, Elasticsearch, Micro-Mobility
+\end{IEEEkeywords}
+
+\section{Executive Summary}
+This report outlines the design, implementation, and evaluation of a fully containerized data engineering architecture specifically designed for urban micro-mobility infrastructure. As electric scooter fleets become a primary means of short-distance urban transportation, the need for robust systems capable of handling high-volume telemetry data has increased significantly.
+
+Our solution addresses this need by processing simulated data from a fleet of 50 active scooters operating on the Şişli-Beşiktaş route, generating approximately 50 records per second. The entire architecture is orchestrated via Docker, featuring automated setup scripts (e.g., \texttt{nifi-setup}, \texttt{es-setup}) to ensure a zero-touch, repeatable deployment model without the need for manual host configurations.
+
+To optimize data ingestion and eliminate routing bottlenecks, a dual-write architecture was implemented. A custom Python simulator directly writes structured telemetry to a PostgreSQL database for persistence, while simultaneously streaming JSONL payloads to a shared volume. Apache NiFi acts exclusively as a real-time anomaly router; utilizing a decoupled \texttt{TailFile} mechanism, it filters hardware faults and forwards them to an Elasticsearch cluster while intentionally dropping normal telemetry. Live spatial tracking of these anomalies via Kibana maps is enabled by configuring explicit \texttt{geo\_point} mappings on Elasticsearch. Finally, Apache Airflow is integrated into the system to execute nightly batch jobs that calculate daily revenue and fleet utilization hotspots. The resulting system demonstrates a highly scalable, fault-tolerant approach to IoT data management, balancing high-frequency sensor streams with real-time operational monitoring and periodic batch analytics.
+
+\section{Problem Statement and Motivation}
+Managing a modern electric scooter fleet presents significant data engineering challenges due to the volume, velocity, and variety of telemetry data generated. Devices continuously broadcast GPS coordinates, battery status, and hardware conditions. When operating in high-density urban areas like the Şişli-Beşiktaş route, data delays or losses can lead to direct operational disruptions, such as the inability to collect vehicles with depleted batteries or the inability to respond immediately to hardware.
+
+The fundamental problem is that traditional architectures, whether monolithic or batch-only, are insufficient for real-time IoT monitoring processes. If a scooter experiences a critical malfunction (e.g., tipping over or sudden GPS signal loss), the operations center needs to be immediately notified so that maintenance teams can be dispatched. In contrast, financial metrics and usage intensity analyses do not require millisecond latency accuracy and are far more efficient when calculated in daily batches. Therefore, it is essential that the architecture supports a dual-path data pipeline that can route heterogeneous data to the most suitable storage environments according to instantaneous usage needs.
+
+Our motivation in establishing this specific data pipeline is to bridge the gap between raw IoT sensor outputs and actionable operational intelligence. By engineering a decoupled system where data acquisition (NiFi), search/tracking (Elasticsearch/Kibana), and relational batch processing (PostgreSQL/Airflow) phases are containerized and isolated, we aim to provide a highly available, scalable infrastructure. This project aims to demonstrate how complex and high-frequency data streams can be reliably captured, parsed, and visualized to maintain the health and profitability of a micro-mobility fleet without overloading the infrastructure.
+
+
+\section{Architectural Design}
+
+The architectural design of our project consists of four primary layers: data generation, ingestion, storage, and processing/visualization. To ensure continuous development and parallel collaboration, the entire architecture was designed as fully isolated microservices deployed via Docker.
+
+\subsection{Component and Data Flow Diagram}
+The data flow within the system is unidirectional and asynchronous. The process initiates with the Python-based simulator, which continuously writes synthetic scooter telemetry to a local directory in \texttt{.jsonl} (JSON Lines) format. 
+
+Apache NiFi serves as the primary backbone of the data pipeline. By employing a \texttt{TailFile} mechanism, NiFi remotely monitors and ingests this file. The raw data is parsed using built-in processors and divided into two distinct streams via content-based routing:
+\begin{itemize}
+    \item \textbf{Stream 1 (Relational Storage):} All telemetry records are written directly to PostgreSQL by the simulator via psycopg2, bypassing NiFi entirely.
+    \item \textbf{Stream 2 (Anomaly Routing):} Records carrying a non-empty \texttt{anomaly\_type} field are forwarded by NiFi to the Elasticsearch cluster for real-time anomaly querying and map visualization. Normal records are intentionally dropped by the router.
+
+\end{itemize}
+
+At the terminals of this split pipeline are business intelligence and monitoring tools. Kibana connects to Elasticsearch to visualize real-time alerts and geographical scooter locations on a map. Concurrently, Apache Airflow reads persistent data from PostgreSQL to generate batch analytical summaries, such as daily hotspot and revenue reports.
+
+\subsection{Rationale for Design Decisions}
+The architectural decisions are fundamentally driven by the principles of system decoupling and polyglot persistence.
+
+\textbf{Avoiding Direct Database Ingestion:} Directly writing the 72,000 records generated per hour by the simulator into PostgreSQL or Elasticsearch would risk significant data loss in the event of a connection failure. Positioning Apache NiFi as an intermediary buffer and router completely isolates the data source from the storage destinations. NiFi’s \texttt{TailFile} mecanism maintains internal state tracking; therefore, even during a system crash, it remembers the exact byte offset of the file, reducing the risk of data loss to zero upon recovery.
+
+\textbf{Dual Storage Strategy (PostgreSQL and Elasticsearch):} Rather than consolidating all data into a single repository, storage engines were selected based on the inherent nature of the data. Operations requiring strict schemas and ACID compliance, such as billing and daily revenue calculations executed by Airflow, are allocated to PostgreSQL. Conversely, relational databases are ineficient at performing full-text lookups within text-based error codes or clustering thousands of coordinates on a map in miliseconds (geo-queries). Thus, the burden of anomaly querying and spatial tracking is delegated to Elasticsearch, which executes these tasks with significantly higher performance due to its inverted index architecture.
+
+\section{Tools Used and Rationale for Their Selection}
+
+The technology stack used in this project was carefully selected to meet the conteinerization and high-throughput requirements specified in the guidelines. Each component was positioned to solve a specific bottleneck in the data flow by comparing it to popular alternatives.
+
+\subsection{Data Generation and Orchestration}
+\textbf{Python Simulator (vs a static dataset):} Instead of using static Kaggle datasets to test the system, a custom Python-based simulator was developed to model a 50-scooter fleet generating aproximately 50 records per second. This approach enabled the deterministic injection of hardware anomalies (e.g., GPS loss, critical battery) and implemented a dual-write strategy to optimize ingestion throughput.
+
+\textbf{Docker and Docker Compose (vs virtual machines):} To ensure absolute system portability, Docker was chosen over traditional virtual machines (VMs) or local instalations. Thanks to Docker Compose, the entire architecture can be deployed using a single YAML file. Furthermore, we integrated ephemeral setup containers (\texttt{nifi-setup}, \texttt{es-setup}, \texttt{kibana-setup}) to automate infrastructure initialization, enabling a zero-touch, repeatable deployment model.
+
+\subsection{Ingestion \& Event Routing}
+\textbf{Apache NiFi (vs Apache Kafka or Logstash):} While Kafka is an industry-standard high-throughput message queue, it requires additional consumer microservices to process data. In our updated dual-write architecture, NiFi acts specifically as an anomaly filter rather than a universal router. Its visual interface and \texttt{RouteOnAttribute} processor allow it to elegantly isolate hardware faults for Elasticsearch while intentionally dropping normal telemetry (which is already secured in PostgreSQL). Furthermore, its \texttt{TailFile} processor offers strict state management, ensuring no critical alerts are lost during container restarts.
+
+\subsection{Storage Layer}
+\textbf{PostgreSQL (vs MongoDB or MySQL):} PostgreSQL is chosen as the primary relational backbone for data with strict schemas. By having the Python simulator write standard telemetry directly to PostgreSQL, we bypassed potential NiFi routing bottlenecks. While NoSQL solutions like MongoDB offer flexibility, the complex SQL "JOIN" and "GROUP BY" operations required by Airflow for daily revenue or grid hotspot calculations are significantly more performant in PostgreSQL.
+
+\textbf{Elasticsearch (vs relational alternatives):} Elasticsearch was utilized specifically for the \texttt{scooter-alerts} index to handle hardware errors and real-time location data. While searching for text-based error codes in tens of thousands of rows in a standard database can take seconds, Elasticsearch accomplishes this in milliseconds thanks to its inverted index architecture. Additionally, its native support for the \texttt{geo\_point} data type makes Kibana spatial queries highly efficient.
+
+\subsection{Processing and Visualisation}
+\textbf{Apache Airflow (vs Cron or Luigi):} Airflow manages the batch processing layer. While simple Linux Cron jobs are insufficient for managing task dependencies (e.g., ensuring trip calculations finish before revenue aggregations), Airflow increases operational reliability by providing automatic retry mechanisms, DAG scheduling (running nightly at 02:00 UTC), and an observable web interface.
+
+\textbf{Kibana (vs Grafana):} For real-time anomaly visualization, Kibana was preferred over Grafana due to its direct, native integration with Elasticsearch. Specifically, the Kibana Maps module offers unparalleled ease of use in converting \texttt{geo\_point} data into dynamic map layers.
+
+
+\section{Implementation Details}
+
+This section details the technical implementation processes of the pipeline, particularly the automation strategies, statistical models in data generation, and advanced configurations in the NiFi/Airflow layers.
+
+\subsection{Automated Infrastructure Setup and Healthcheck Chain}
+To fulfill the "one-command setup" requirement in the instructions, the system is built on a strict container dependency chain (healthcheck). Containers don't start up randomly; instead, they wait for each other to reach a "healthy" state.
+\begin{itemize}
+    \item \textbf{Database priority:} The `\texttt{simulator}` service will not start until the `\texttt{PostgreSQL}` container is fully ready. Temporary containers like `\texttt{nifi-setup}` and `\texttt{es-setup}` are activated as soon as the main services' APIs begin responding, perform the necessary configurations, and automatically shut down once their tasks are complete.
+\end{itemize}
+
+\subsection{Data Generation and Probabilistic Modeling}
+The Python-based simulator models a fleet of 50 scooters, generating 50 records per second. To ensure a realistic data flow, the following statistical probabilities are run in each second cycle:
+\begin{itemize}
+    \item \textbf{Drive Start:} A free scooter has a 5\% chance of starting a ride every second.
+    \item \textbf{Drive finish:} A device in motion is designed with a 3\% probability of its journey ending.
+    \item \textbf{Anomaly Injection:} To test system robustness, an anomaly (\textit{topple, critical\_battery, gps\_loss, motor\_fault}) is generated with a 4\% probability in each recording cycle.
+\end{itemize}
+
+\subsection{NiFi flow control and REST API Integration}
+Apache NiFi version 1.25.0 employs a unique method via the `\texttt{nifi-setup}` container to overcome inconsistencies in importing XML templates. Instead of using pre-made templates, the system programmatically creates all processors and connections individually through HTTP requests via the NiFi REST API.
+
+In the real-time anomaly parsing process, the following NiFi Expression Language (NEL) code was used on the \texttt{RouteOnAttribute} operator:
+\begin{verbatim}
+${anomaly_type:isEmpty():not()}
+\end{verbatim}
+This code checks if the `\texttt{anomaly\_type}` field in the JSON payload is filled, redirecting only erroneous records to Elasticsearch and discarding empty (normal) records, thus preventing unnecessary load on the system.
+
+\subsection{Elasticsearch and Geo-Point Configuration}
+To enable the visualization of spatial analyses on Kibana Maps, the \texttt{scooter-alerts} index was manually configured before the data stream. Instead of dynamic mapping, the \texttt{location} field was explicitly defined as the \texttt{geo\_point} data type. This ensures that latitude and longitude data are processed not just as numerical values, but as searchable coordinates on the map.
+
+\subsection{Airflow DAG Structure and Parallel Processing}
+The DAG named \texttt{scooter\_daily\_summary} on Apache Airflow is triggered every night at 02:00 UTC. A parallel processing architecture has been established between tasks to increase efficiency:
+\begin{itemize}
+    \item first, the \texttt{compute\_trip\_summaries} task runs and identifies completed drives.
+    \item When this task is successfully completed, \texttt{compute\_daily\_hotspots} and \texttt{compute\_daily\_revenue} tasks are executed simultaneously (in parallel), without waiting for each other.
+\end{itemize}
+This structure minimizes the total execution time of heavy analytical queries, thus reducing the risk of database lockups.
+\section{Evaluation}
+
+To verify that the pipeline behaves correctly under sustained load, we ran a series of measurements covering ingestion throughput, routing accuracy, data quality, and batch processing. All figures below come from a single uninterrupted session rather than cherry-picked runs.
+
+\subsection{Throughput and Volume Metrics}
+
+We left the stack running for roughly 7.5 hours (12:01 to 19:49 UTC, 10 May 2026) without touching it. At the end of the session we queried PostgreSQL directly and got the following numbers:
+
+\begin{itemize}
+    \item Total records ingested: 680,750
+    \item Total anomaly records: 27,109 (3.98\%)
+    \item Session duration: $\sim$7.5 hours
+    \item Effective throughput: $\sim$25,200 records/minute
+\end{itemize}
+
+The 3.98\% anomally share is essentially identical to the 4\% target we hardcoded into the simulator, which tells us the probabilistic injection logic is holding up correctly at scale, it is not drifting over long runs.
+
+\subsection{NiFi Routing Accuracy}
+
+The whole point of the NiFi layer is to forward only anomalies to Elasticsearch and drop everything else. To check this, we compared the document count in the \texttt{scooter-alerts} index against the anomaly row count in PostgreSQL. Both came out at 27,109. That match means two things:
+
+\begin{enumerate}
+    \item No normal record slipped through the \texttt{RouteOnAttribute} filter.
+    \item No anomaly was silently discarded, every one of them made it to Elasticsearch.
+\end{enumerate}
+
+The routing expression \texttt{\$\{anomaly\_type:isEmpty() :not()\}} turned out to be the right call here; earlier attempts with \texttt{isNull()} failed because NiFi converts JSON nulls to empty strings rather than actual null attributes.
+
+\subsection{Data Quality Checks}
+
+We looked at three dimensions:
+
+\begin{enumerate}
+    \item \textbf{Completeness}: All 680,750 rows carry the mandatory fields (\texttt{event\_id}, \texttt{scooter\_id}, \texttt{ts}, \texttt{speed\_kmh}, \texttt{battery\_pct}) with no NULLs in columns that are not supposed to have them.
+
+    \item \textbf{Consistency}: \texttt{anomaly\_type} and \texttt{fault\_code} are either both NULL (a normal ride record) or both filled (an anomaly event). We spot-checked several hundred rows and found no mismatched pairs.
+
+    \item \textbf{Geo-validity}:Scooters that lost GPS signal have \texttt{gps\_valid = FALSE} and a NULL location field. The Kibana map layer only renders documents that carry a proper \texttt{geo\_point} value, so those records are automaticaly excluded from the map without any extra filtering.
+\end{enumerate}
+
+\subsection{Service Health and Startup Reliability}
+
+On a standard development machine (16 GB RAM, 8-core CPU), all 11 containers were up and healthy within about 4 minutes of running \texttt{docker compose up -{}-build} for the first time. The healthcheck-based \texttt{depends\_on} chain in the Compose file did its job: no service tried to connect to a dependency that was not yet ready. Figure~\ref{fig:startup} shows the startup output confriming every container reached a running state in the correct order.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{images/docker_ps_healthy.png}
+    \caption{All 11 containers running after \texttt{docker compose up -{}-build}.}
+    \label{fig:startup}
+\end{figure}
+
+\subsection{Airflow DAG Correctness}
+
+Because the DAG is scheduled for 02:00 UTC, we triggered it manually during the session to catch any issues before the first real run. All four tasks finished without errors:
+
+\begin{itemize}
+    \item \texttt{ensure\_postgres\_connection} --- database was reachable
+    \item \texttt{compute\_trip\_summaries} --- \texttt{public.trips} populated
+    \item \texttt{compute\_daily\_hotspots} --- \texttt{public.daily\_hotspots} populated (ran in parallel)
+    \item \texttt{compute\_daily\_revenue} --- \texttt{public.daily\_revenue} populated (ran in parallel)
+\end{itemize}
+
+The full DAG completed in under 2 minutes for the 7.5 hour dataset. For a nightly job that has an entire night to finish, that is a comfortable margin.
+
+\section{Limitations and Future Work}
+
+This section discusses the current limitations of the developed data engineering pipeline and the targeted future improvements for scaled-up to industrial production.
+
+\subsection{Current Limitations}
+The project has some technical limitations due to its scope and the use of local resources:
+\begin{itemize}
+    \item \textbf{single Node Infrastructure:} The current system operates via Docker containers on a single physical machine. While this might be sufficient for a load of 50 records per second, it can lead to vertical and horizontal scaling bottlenecks under the load created by a real-world fleet of tens of thousands of scooters.
+    \item \textbf{Simulation Data and External Factors:} Although the data was generated by a high-acuracy simulator, external variables affecting driving performance and battery life, such as weather conditions, traffic density, and terrain gradient, were not fully incorporated into the model.
+    \item \textbf{Data Archiving (Cold Storage):} The system stores all telemetry data on PostgreSQL and Elasticsearch As data volume increases, a mechanism for migrating older data to "cold storage" tiers like Amazon S3 or Google Cloud Storage for cost-effectiveness has not yet been established.
+\end{itemize}
+
+\subsection{Future Work}
+The planned improvements to increase the operational efficiency of the system are as follows:
+\begin{itemize}
+   \item \textbf{Cloud Migration:} Migrating the existing Docker architecture to AWS (Amazon Web Services) or GCP (Google Cloud Platform) and managing it with Kubernetes (EKS/GKE) will make the system fully scalable and highly avaliable. \item \textbf{Predictive Maintenance:} Machine learning models can be trained using historical anomaly and battery data accumulated in PostgreSQL. Thanks to this models, the probability of a scooter malfunctioning can be predicted before it happens, thus reducing operating costs. 
+   \item \textbf{Dynamic Pricing:} The density (hotspot) reports generated by Airflow can be combined with a real-time API, establishing the infrastructure for a dynamic pricing model in high-demand areas. 
+   \item \textbf{Advanced Security Layer:} Data security will be brought to industry standards by using SSL/TLS certificates in inter-service communication and strengthening user-based access control (RBAC) mechanisms. 
+\end{itemize}
+
+\section{AI Usage Declaration}
+
+We occasionally used LLM tools while writing documentation, debugging SQL queries, and improving wording in English. However, the system architecture, implementation decisions, and testing procedures were designed and validated manually by the team.
+
+The main areas where AI tools were included in the project are listed below:
+\begin{itemize}
+\item \textbf{Academic Reporting and Translation:} Language models were used to support the structuring of the project report sections in an academic manner, the translation of Turkish technical descriptions into English according to international terminology, and the improvement of text fluency. 
+\item \textbf{Code and Configuration Support:} Artificial intelligence was used for debugging in the stages of establishing probabilistic models (probability distribution) in the Python simulator, designing the NiFi Expression Language (NEL) logic, and optimizing complex SQL queries (JOIN and GROUP BY). 
+\item \textbf{Architectural Documentation:} Structural support was used in the processes of expressing the data flow in the system (dual-write strategy, decoupling principles, etc.) in a technically correct language and justifying design decisions.
+\end{itemize}
+
+\section{Individual Contribution Table}
+
+This section summarizes the primary tasks and responsibilities undertaken by the team members during the development and documentation phases of the project. The project was completed through active collaboration and continuous coordination between both members.
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\footnotesize
+
+\begin{tabularx}{\linewidth}{|p{2.8cm}|p{2.2cm}|X|}
+\hline
+\textbf{Name Surname} & \textbf{Student ID} & \textbf{Primary Contributions and Responsibilities} \\ \hline
+
+Yusuf Oğuz & 150220322 &
+Design of the system architecture, establishment of the Docker container hierarchy, NiFi REST API integration, Python simulator logic, and development of Airflow DAGs.
+\\ \hline
+
+Yusuf Öksüzer & 150220334 &
+Writing the academic report, documentation of the system architecture, execution of performance tests (throughput/latency), data quality controls, and analysis of design decisions.
+\\ \hline
+
+\end{tabularx}
+
+\caption{Team Members and Task Distribution}
+\end{table}
+
+\subsection{Contribution Summary}
+\begin{itemize}
+    \item \textbf{Architecture and Development:} End-to-end orchestration and optimization via Dockerized microservices and automated setup scripts were led by Yusuf Oğuz.
+    \item \textbf{Analysis and Reporting:} The academic presentation of the system within the framework of engineering principles (decoupling, polyglot persistence) and the formulation of testing strategies were led by Yusuf Öksüzer.
+    \item \textbf{Final Review:} Both members performed cross-reviews of each other's outputs (code and report) to ensure overall system integrity and technical accuracy.
+\end{itemize}
+
+\begin{thebibliography}{00}
+
+\bibitem{nifi} 
+Apache Software Foundation, ``Apache NiFi Documentation,'' 2024. [Online]. Available: https://nifi.apache.org/docs.html
+
+\bibitem{elasticsearch} 
+Elastic, ``Elasticsearch Guide,'' 2024. [Online]. Available: https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html
+
+\bibitem{airflow} 
+Apache Software Foundation, ``Apache Airflow Documentation,'' 2024. [Online]. Available: https://airflow.apache.org/docs/
+
+\bibitem{postgres} 
+PostgreSQL Global Development Group, ``PostgreSQL 15 Documentation,'' 2024. [Online]. Available: https://www.postgresql.org/docs/15/
+
+\bibitem{docker} 
+Docker Inc., ``Docker Compose Overview,'' 2024. [Online]. Available: https://docs.docker.com/compose/
+
+\end{thebibliography}
+
+    
+
+\end{document}
