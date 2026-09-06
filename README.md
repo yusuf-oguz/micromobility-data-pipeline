@@ -2,8 +2,6 @@
 
 End-to-end containerized data engineering pipeline for a simulated electric scooter fleet operating in the Şişli-Beşiktaş district of Istanbul.
 
-**YZV 322E — Applied Data Engineering · Spring 2026 · Istanbul Technical University**
-
 ## Team Members
 
 | Name | Student No |
@@ -55,7 +53,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Allow ~3-5 minutes for all services to initialize. Everything is fully automatic — no manual configuration needed.
+Allow ~3-5 minutes for all services to initialize. Everything is fully automatic, no manual configuration needed.
 
 ## Service URLs
 
@@ -87,9 +85,9 @@ Allow ~3-5 minutes for all services to initialize. Everything is fully automatic
    - Anomalies & faults → **Elasticsearch** (`scooter-alerts` index)
    - Normal telemetry → dropped (already in PostgreSQL)
 3. **Airflow** runs nightly at 02:00 UTC, aggregating into:
-   - `public.trips` — trip summaries with revenue
-   - `public.daily_hotspots` — 500m grid ride density
-   - `public.daily_revenue` — fleet-wide daily revenue
+   - `public.trips`: trip summaries with revenue
+   - `public.daily_hotspots`: 500m grid ride density
+   - `public.daily_revenue`: fleet-wide daily revenue
 4. **Kibana** shows real-time anomaly map and dashboards (auto-imported)
 5. **pgAdmin** provides a GUI for PostgreSQL inspection
 
