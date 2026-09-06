@@ -17,10 +17,8 @@ End-to-end containerized data engineering pipeline for a simulated electric scoo
 
 ## Team Members
 
-| Name | Student No |
-|------|-----------|
-| Yusuf Oğuz | 150220322 |
-| Yusuf Öksüzer | 150220334 |
+- Yusuf Oğuz
+- Yusuf Öksüzer
 
 ## Architecture
 
@@ -130,11 +128,13 @@ scooter-pipeline/
 
 ## Environment Variables
 
-Secrets are stored in `.env` (not committed to git). Copy `.env.example` and fill in values:
+Secrets are stored in `.env` (not committed to git):
 
 ```bash
 cp .env.example .env
 ```
+
+`.env.example` already ships with working demo credentials (`admin12345` everywhere, plus a fixed Airflow Fernet key) so the whole stack runs immediately with zero setup. This is intentional, not an oversight: every service here binds only to `localhost`, and the stack is meant to run on your own machine for a demo or development session, never exposed to a network. Anyone deploying this beyond localhost should replace every credential and generate a fresh Fernet key first.
 
 ## Known Limitations
 
