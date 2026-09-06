@@ -1,5 +1,18 @@
 # Scooter Fleet IoT Data Pipeline
 
+<details>
+<summary>🇹🇷 Türkçe özet için tıklayın</summary>
+
+İstanbul'un Şişli-Beşiktaş bölgesinde simüle edilmiş bir elektrikli scooter filosu için uçtan uca, konteynerize bir veri mühendisliği pipeline'ı. Takım projesi (Yusuf Oğuz, Yusuf Öksüzer).
+
+**Mimari:** bir Python simülatörü 50 scooter için GPS/pil/hız/anomali verisi üretip hem doğrudan PostgreSQL'e hem bir JSONL dosyasına yazıyor. Apache NiFi bu dosyayı izleyip anomalileri Elasticsearch'e yönlendiriyor, Kibana canlı harita ve dashboard gösteriyor, Apache Airflow ise her gece toplu özet tabloları (yolculuklar, bölge yoğunluğu, gelir) üretiyor. Tüm sistem tek bir `docker compose up` komutuyla ayağa kalkıyor, servisler (NiFi işlemcileri, Elasticsearch index'leri, Kibana dashboard'u, Airflow) otomatik kuruluyor.
+
+Detaylı mimari şeması, servis tablosu, veri akışı ve bilinen kısıtlamalar için aşağıdaki İngilizce bölüme bakılabilir.
+
+</details>
+
+---
+
 End-to-end containerized data engineering pipeline for a simulated electric scooter fleet operating in the Şişli-Beşiktaş district of Istanbul.
 
 ## Team Members
