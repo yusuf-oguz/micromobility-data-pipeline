@@ -1,7 +1,6 @@
 # System Architecture
 
-**YZV 322E — Applied Data Engineering, Spring 2026**
-Yusuf Oğuz & Yusuf Öksüzer
+A team project by Yusuf Oğuz and Yusuf Öksüzer.
 
 ## Pipeline Overview
 
